@@ -1,0 +1,377 @@
+\documentclass[a4paper]{article}
+\usepackage[CJKaddspaces ,CJKchecksingle ,CJKnumber]{xeCJK}
+    \setCJKmainfont[BoldFont={Adobe Heiti Std},
+    ItalicFont={Adobe Kaiti Std}]{Adobe Song Std}
+    \setCJKsansfont{Adobe Heiti Std}
+    \setCJKmonofont{Adobe Fangsong Std}
+    \punctstyle{hangmobanjiao}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+
+
+\lstset{ %
+  backgroundcolor=\color{white},   % choose the background color; you must add \usepackage{color} or \usepackage{xcolor}
+  basicstyle=\footnotesize,        % the size of the fonts that are used for the code
+  breakatwhitespace=false,         % sets if automatic breaks should only happen at whitespace
+  breaklines=true,                 % sets automatic line breaking
+  captionpos=bl,                    % sets the caption-position to bottom
+  deletekeywords={...},            % if you want to delete keywords from the given language
+  escapeinside={\%*}{*)},          % if you want to add LaTeX within your code
+  extendedchars=true,              % lets you use non-ASCII characters; for 8-bits encodings only, does not work with UTF-8
+  frame=single,                    % adds a frame around the code
+  keepspaces=true,                 % keeps spaces in text, useful for keeping indentation of code (possibly needs columns=flexible)
+  keywordstyle=\color{blue},       % keyword style
+  %language=Python,                 % the language of the code
+  morekeywords={*,...},            % if you want to add more keywords to the set
+  numbers=left,                    % where to put the line-numbers; possible values are (none, left, right)
+  numbersep=5pt,                   % how far the line-numbers are from the code
+  rulecolor=\color{black},         % if not set, the frame-color may be changed on line-breaks within not-black text (e.g. comments (green here))
+  showspaces=false,                % show spaces everywhere adding particular underscores; it overrides 'showstringspaces'
+  showstringspaces=false,          % underline spaces within strings only
+  showtabs=false,                  % show tabs within strings adding particular underscores
+  stepnumber=1,                    % the step between two line-numbers. If it's 1, each line will be numbered
+  stringstyle=\color{orange},     % string literal style
+  tabsize=2,                       % sets default tabsize to 2 spaces
+}
+\newcommand{\HRule}{\rule{\linewidth}{0.5mm}}
+
+\begin{document}
+
+\begin{titlepage}
+    \begin{center} % Upper part of the page
+    \includegraphics[width=0.15\textwidth]{sjtu.png}\\[1cm]
+    \textsc{\LARGE CS334 计算机组成实验}\\[1.5cm]
+    \textsc{\Large Lab6}\\[0.5cm] % Title
+    \HRule \\[0.4cm] { \huge \bfseries 简单的类 MIPS单周期处理器}\\[0.4cm]
+    \HRule \\[1.5cm] % Author and supervisor
+    \begin{minipage}{0.4\textwidth}
+        \begin{flushleft}
+        \large
+        周鼎\\
+        5140219268
+        \end{flushleft}
+        \end{minipage}
+        \begin{minipage}{0.4\textwidth}
+        \begin{flushright}
+        \large
+        指导老师：王老师
+        \end{flushright}
+        \end{minipage}
+        \vfill % Bottom of the page
+        {\large \today}
+    \end{center}
+\end{titlepage}
+
+
+\section{顶层结构}
+            \begin{figure}[htbp]
+                \centering
+                    \includegraphics[scale = 0.8]{top.pdf}
+                \caption{单周期MIPS顶层结构}\label{TOP}
+            \end{figure}
+            \begin{center}
+              \textbf{注}：jump指令相应的data path将在后续添加。
+            \end{center}
+
+
+
+\section{PC}
+    PC是一个十分简单然而特别关键的模块：它只需完成在时钟上升沿更新PC、在随后一个周期中保持的功能；它又是整个设计中程序能否正确执行和跳转的关键,要注意需要初始置零（也可通过运行时先加reset信号实现）。实现的代码和仿真结果见PC.v和Figure\ref{PCSIM}
+    \begin{lstlisting}[language={Verilog},title={PC.v}]
+module Pc(
+    input clock_in,
+    input [31:0] nextPC,
+    output[31:0] currPC,
+    input rst
+    );	
+	 reg [31:0] PCFile;
+	 initial PCFile <= 0;
+
+	 always @(posedge clock_in)	 begin
+		if(rst) PCFile <= 0;
+		else PCFile <= nextPC;
+	 end
+	
+	 assign currPC = PCFile;
+
+endmodule   \end{lstlisting}
+    \begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{pcsim.png}
+    \caption{PC行为仿真}\label{PCSIM}
+    \end{figure}
+
+
+\section{InstrMem}
+    处理器执行的指令需要装载在InstrMen中，因其十分简单直接在Top中实现，不另设计模块。注意指令为32位，按word读取将PC右移2位。
+    \begin{lstlisting}[language={Verilog},title={instrMem.v}]
+    //define AND initial Instruction Memory
+	reg [31:0] InstrMemory[9:0];
+	initial $readmemb("./src/inst.txt",InstrMemory);
+    wire [31:0] INSTR;
+    wire [31:0] CURR_PC;
+	assign INSTR = InstrMemory[CURR_PC>>2];  //fetch instruction by PC   \end{lstlisting}
+
+\section{signExtender}
+    符号扩展用于I-type指令扩展其后16位，可简单调用系统任务实现。
+    \begin{lstlisting}[language={Verilog},title={signExtender.v}]
+    wire [31:0] extRes;
+    assign extRes = $signed(INSTR[15:0]);   \end{lstlisting}
+\section{MUX}
+    MUX可通``MUX=Sel\quad ?Opt1:Opt2''实现。
+    \begin{lstlisting}[language={Verilog},title={MUXes.v}]
+	assign MEM_REG_MUX = MEM_TO_REG ? MEM_READ_DATA : ALU_RES;	
+	//R-type or load word
+	assign REG_ALU_MUX = ALU_SRC ? EXTENDED_RES : REG_DATA_2;
+	//which one to be used by ALU as the 2nd src
+	assign REG_WRITE_ADDRESS = REG_DST ? INSTR[15:11] : INSTR[20:16];
+	//which reg will be written   \end{lstlisting}
+
+\section{nextPC}
+    PC更新有三种情况：
+    \begin{lstlisting}[language={Verilog}]
+    PC <= PC + 4;
+    PC <= (INSTR[15:0]<<2) + PC + 4;                //BEQ
+    PC <= {INSTR[31:28],((PC + 4)<<2)[27:0]};       //JUMP    \end{lstlisting}
+\begin{figure}
+  \centering
+  \includegraphics[width=1\textwidth]{nextpc.pdf}
+  \caption{nextPC生成}
+\end{figure}
+\begin{lstlisting}[language={Verilog},title={nextPC.v}]
+	wire [31:0] JUMP_ADDRESS;
+	wire [31:0] BEQ_ADDRESS;
+	//assign JUMP_ADDRESS
+	assign JUMP_ADDRESS[31:28] = PCp4[31:28];
+	assign JUMP_ADDRESS[27:2]  = INSTR[25:0];
+	assign JUMP_ADDRESS[1:0]   = 'b00;
+	//assign BEQ_ADDRESS
+	assign BEQ_ADDRESS[31:0] = (EXTENDED_RES<<2) + PCp4;	
+	
+	wire [31:0] PC_SRC_SEL;
+    wire [31:0] NEXT_PC;
+	//wire [31:0] PCp4;
+	//wire [31:0] CURR_PC;  //declared above;
+	wire PC_SRC;
+	assign PC_SRC = BRANCH & ZERO;	
+	assign PCp4[31:0] = CURR_PC[31:0] + 4;
+	//serval MUX below
+	assign PC_SRC_SEL[31:0] = PC_SRC ? BEQ_ADDRESS[31:0]: PCp4[31:0];
+	assign NEXT_PC[31:0] = JUMP ? JUMP_ADDRESS[31:0] : PC_SRC_SEL[31:0];   \end{lstlisting}
+
+\section{信号线和模块实例化}
+    对连线系统的命名有助于连线不重不漏，也便于实例化模块。
+    \begin{lstlisting}[language={Verilog},title={wire.v}]
+//                  main control signal                 //
+	wire REG_DST,
+		  JUMP,
+		  BRANCH,
+		  MEM_READ,
+		  MEM_TO_REG,
+		  MEM_WRITE,
+		  ALU_SRC,
+		  REG_WRITE,
+		  ZERO;  //generated by ALU
+	wire [1:0]  ALU_OP;
+	wire [3:0]  ALU_CTR;
+	
+//                  data bus                    //
+
+	wire [31:0] REG_DATA_1;
+	wire [31:0] REG_DATA_2;
+    //reg read output
+	wire [4:0]  REG_WRITE_ADDRESS;
+    //reg write address, the data will be from the MEM_REG_MUX
+	wire [31:0] ALU_RES;
+	wire [31:0] EXTENDED_RES;	
+	wire [31:0] MEM_READ_DATA;	//address specified by alu result
+	
+	wire [31:0] MEM_REG_MUX;	
+    //to be written into reg(memomy or alu result)
+	wire [31:0] REG_ALU_MUX;
+    //which one to be used by ALU as the 2nd src(rt or imm)   \end{lstlisting}
+    \begin{lstlisting}[language={Verilog},title={instances.v}]
+	Pc mainPC(
+      .clock_in(CLOCK_IN),
+      .nextPC(NEXT_PC),
+      .currPC(CURR_PC),
+		.rst(RESET)
+    );	
+	Ctr mainCtr(
+		.opCode(INSTR[31:26]),
+		.regDst(REG_DST),
+		.aluSrc(ALU_SRC),
+		.memToReg(MEM_TO_REG),
+		.regWrite(REG_WRITE),
+		.memRead(MEM_READ),
+		.memWrite(MEM_WRITE),
+		.branch(BRANCH),
+		.aluOp(ALU_OP),
+		.jump(JUMP)
+	);	
+	AluCtr mainAluCtr (
+		.aluOp(ALU_OP),
+		.funct(INSTR[5:0]),
+		.aluCtr(ALU_CTR)
+	);	
+	Alu mainAlu (
+		.input1(REG_DATA_1),
+		.input2(REG_ALU_MUX),
+		.aluCtr(ALU_CTR),
+		.zero(ZERO),
+		.aluRes(ALU_RES)
+	);	
+	signExt mainSignExt (
+		.inst(INSTR[15:0]),
+		.data(EXTENDED_RES)
+	);	
+	dataMemory mainDataMemory (
+		.clock_in(CLOCK_IN),
+		.address(ALU_RES),
+		.writeData(REG_DATA_2),
+		.readData(MEM_READ_DATA),
+		.memWrite(MEM_WRITE),
+		.memRead(MEM_READ)
+	);	
+	Register mainRegister (
+		.clock_in(CLOCK_IN),
+		.regWrite(REG_WRITE),
+		.readReg1(INSTR[25:21]),
+		.readReg2(INSTR[20:16]),
+		.writeReg(REG_WRITE_ADDRESS),
+		.writeData(MEM_REG_MUX),
+		.reset(RESET),
+		.readData1(REG_DATA_1),
+		.readData2(REG_DATA_2),
+		.reg1(reg1),
+		.reg2(reg2)
+	);	
+endmodule   \end{lstlisting}
+
+\section{ModelSim仿真}
+    \begin{figure}[hb]
+        \begin{minipage}[t]{0.6\linewidth}
+        \centering
+            \begin{lstlisting}[language={Verilog}]
+00001000000000000000000000000010
+00000000000000000000000000000000
+10001100000000010000000000000000
+10001100000000100000000000000100
+00000000001000100000100000100000
+00000000001000100001000000100000
+00010000000000001111111111111101  \end{lstlisting}
+        \caption{二进制指令}
+        \end{minipage}%
+        \begin{minipage}[t]{0.4\linewidth}
+        \centering
+            \begin{lstlisting}[language={Verilog}]
+j 2
+nop
+lw	$1,	(0)$0;
+lw	$2, (4)$0;
+AGAIN:  ADD $1, $1, $2;
+        ADD $2, $1, $2;
+beq $0, $0, AGAIN;   \end{lstlisting}
+        \caption{MIPS指令}
+        \end{minipage}
+    \end{figure}
+
+    \begin{figure}[hb]
+    \centering
+        \includegraphics[width=1\textwidth]{topsim.png}
+    \caption{ModelSim仿真波形}
+    \end{figure}
+
+\section{上板输入输出实现方案}
+    \subsection{IO Scheme}
+        \begin{figure}[h]
+        \begin{minipage}[t]{0.51\linewidth}
+        \centering
+        \begin{tabular}{cc}
+          \toprule
+          SW[2:0] & MODE\\
+          % after \\: \hline or \cline{col1-col2} \cline{col3-col4} ...
+          \midrule
+          000 & led[5:3]为\$2,led[2:0]为\$1 \\
+          001 & led显示\$1 \\
+          011 & led显示\$2 \\
+          111 & led显示PC \\
+          \bottomrule
+        \end{tabular}
+        \end{minipage}%
+        \begin{minipage}[t]{0.49\linewidth}
+        \centering
+        \begin{tabular}{l}
+        \qquad    设计使用8个LED作为输出，\\
+        4个开关和1个复位式按钮作为输\\
+        入，具体功能见下图。因板上接口\\
+        限制，将只对输出寄存器\$1,\$2和\\
+        PC,通过SW[2:0]选择输出模式，\\
+        见左图。\\
+        \end{tabular}
+
+        \end{minipage}
+    \end{figure}
+
+    \begin{table}[h]
+        \centering
+        \begin{tabular}{ll}
+              \toprule
+              IO Port & Function\\
+              \midrule
+              LED[7]    &   查看clock信号 \\
+              LED[6]    &   查看reset信号 \\
+              LED[5:0]  &   查看寄存器数值 \\
+              SW[3]     &   调整时钟快/慢模式 \\
+              SW[2:0]   &   设置寄存器数值输出模式 \\
+              Button    &   输入reste信号 \\
+              \bottomrule
+            \end{tabular}
+            \caption{IO Scheme}
+
+    \end{table}
+    \subsection{IO控制逻辑}
+    \begin{lstlisting}[language={Verilog},title={IO.v}]
+////            GENRERATING SLOW CLOCK          ////
+	wire CLOCK_IN;
+	reg [26:0] Buffer = 0;
+	always@ (posedge CLOCK) Buffer = Buffer + 1;
+	assign CLOCK_IN = FAST ? CLOCK : Buffer[26];
+
+////            IO MODE SEL                     ////
+	assign LED[7] = RESET;
+	assign LED[6] = CLOCK_IN;
+	wire [5:0] OUTPUT;
+	assign LED[5:0] = OUTPUT;
+	wire [31:0] reg1;
+	wire [31:0] reg2;
+	wire [5:0]  reg12;
+	assign reg12[5:3] = reg2;
+	assign reg12[2:0] = reg1;
+	wire [31:0] CURR_PC_IO;
+  assign CURR_PC_IO = CURR_PC>>2;
+	wire [5:0] TEMP1;
+	wire [5:0] TEMP2;
+	assign TEMP1 = MODE[0] ? reg1:reg12;
+	assign TEMP2 = MODE[1] ? reg2:TEMP1;
+	assign OUTPUT = MODE[2]? CURR_PC_IO:TEMP2;  \end{lstlisting}
+    \subsection{User Constraint File}
+    \begin{lstlisting}[language={Verilog},title={top.ucf}]
+NET "CLOCK"   LOC = C9;
+NET "LED[0]"  LOC = F12;
+NET "LED[1]"  LOC = E12;
+NET "LED[2]"  LOC = E11;
+NET "LED[3]"  LOC = F11;
+NET "LED[4]"  LOC = C11;
+NET "LED[5]"  LOC = D11;
+NET "LED[6]"  LOC = E9;
+NET "LED[7]"  LOC = F9;
+NET "MODE[0]" LOC = L13;
+NET "MODE[1]" LOC = L14;
+NET "MODE[2]" LOC = H18;
+NET "FAST" 	  LOC = N17;
+NET "RESET"   LOC = K17 | IOSTANDARD = LVTTL | PULLDOWN;  \end{lstlisting}
+
+
+\end{document} 
